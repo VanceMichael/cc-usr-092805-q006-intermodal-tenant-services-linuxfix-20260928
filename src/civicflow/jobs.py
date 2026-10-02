@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from .database import Database
 from .errors import ConflictError, NotFoundError, ValidationError
-from .identifiers import new_id
+from .identifiers import new_id, require_safe
 from .jsonutil import canonical_json
 from .timeutil import Clock, canonical_instant, parse_instant
 
@@ -18,10 +18,23 @@ class JobQueue:
     clock: Clock
 
     def schedule(self, *, job_type: str, subject_id: str, run_at: str, payload: dict) -> str:
-        job_id = new_id("job"); run_at = canonical_instant(run_at)
-        with self.database.transaction() as connection:
-            connection.execute("INSERT INTO scheduled_jobs(job_id,job_type,subject_id,run_at,payload_json,status) VALUES(?,?,?,?,?,'waiting')", (job_id, job_type, subject_id, run_at, canonical_json(payload)))
+        job_id = new_id("job")
+        self.schedule_named(job_id, job_type=job_type, subject_id=subject_id, run_at=run_at, payload=payload)
         return job_id
+
+    def schedule_named(self, job_id: str, *, job_type: str, subject_id: str, run_at: str, payload: dict, connection=None) -> bool:
+        """登记确定性编号的持久任务；重复登记（如进程重启后）返回 False 且不覆盖原期限。"""
+        require_safe(job_id, "任务标识")
+        run_at = canonical_instant(run_at)
+        if connection is not None:
+            return self._insert_named(connection, job_id, job_type, subject_id, run_at, payload)
+        with self.database.transaction() as c:
+            return self._insert_named(c, job_id, job_type, subject_id, run_at, payload)
+
+    @staticmethod
+    def _insert_named(connection, job_id: str, job_type: str, subject_id: str, run_at: str, payload: dict) -> bool:
+        cursor = connection.execute("INSERT OR IGNORE INTO scheduled_jobs(job_id,job_type,subject_id,run_at,payload_json,status) VALUES(?,?,?,?,?,'waiting')", (job_id, job_type, subject_id, run_at, canonical_json(payload)))
+        return cursor.rowcount == 1
 
     def claim_due(self, *, seconds: int = 30, limit: int = 20) -> list[dict]:
         if seconds < 1 or limit < 1:

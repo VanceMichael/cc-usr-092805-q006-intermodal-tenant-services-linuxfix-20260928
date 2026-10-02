@@ -14,10 +14,15 @@ class AccessContext:
     permissions: frozenset[str] = field(default_factory=frozenset)
     scopes: frozenset[str] = field(default_factory=frozenset)
     reveal_sensitive: bool = False
+    tenant_id: str | None = None
 
     @classmethod
     def system(cls, actor_id: str = "system") -> "AccessContext":
         return cls(actor_id=actor_id, permissions=frozenset({"*"}), scopes=frozenset({"*"}), reveal_sensitive=True)
+
+    @classmethod
+    def tenant_user(cls, actor_id: str, tenant_id: str, permissions: Iterable[str] = ()) -> "AccessContext":
+        return cls(actor_id=actor_id, permissions=frozenset(permissions), tenant_id=tenant_id)
 
     def allows(self, permission: str) -> bool:
         return "*" in self.permissions or permission in self.permissions

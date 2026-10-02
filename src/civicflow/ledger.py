@@ -27,7 +27,7 @@ class Ledger:
     database: Database
     clock: Clock
 
-    def post(self, *, journal_key: str, account: str, currency: str, amount: str, direction: str, reference: str, actor: str) -> dict:
+    def post(self, *, journal_key: str, account: str, currency: str, amount: str, direction: str, reference: str, actor: str, connection=None) -> dict:
         require_safe(journal_key, "账簿标识"); require_safe(currency, "币种")
         if direction not in {"debit", "credit"}:
             raise ValidationError("方向必须是 debit 或 credit")
@@ -35,11 +35,16 @@ class Ledger:
         if minor <= 0:
             raise ValidationError("金额必须大于零")
         entry_id = new_id("entry")
+        if connection is not None:
+            return self._insert(connection, entry_id, journal_key, account, currency, minor, direction, reference, actor)
         with self.database.transaction() as connection:
-            duplicate = connection.execute("SELECT entry_id FROM journal_entries WHERE journal_key=? AND reference=? AND direction=?", (journal_key, reference, direction)).fetchone()
-            if duplicate:
-                raise ConflictError("相同参考号和方向已经入账")
-            connection.execute("INSERT INTO journal_entries(entry_id,journal_key,account,currency,amount_minor,direction,reference,occurred_at,posted_by) VALUES(?,?,?,?,?,?,?,?,?)", (entry_id, journal_key, account, currency, minor, direction, reference, self.clock.now(), actor))
+            return self._insert(connection, entry_id, journal_key, account, currency, minor, direction, reference, actor)
+
+    def _insert(self, connection, entry_id, journal_key, account, currency, minor, direction, reference, actor) -> dict:
+        duplicate = connection.execute("SELECT entry_id FROM journal_entries WHERE journal_key=? AND reference=? AND direction=?", (journal_key, reference, direction)).fetchone()
+        if duplicate:
+            raise ConflictError("相同参考号和方向已经入账")
+        connection.execute("INSERT INTO journal_entries(entry_id,journal_key,account,currency,amount_minor,direction,reference,occurred_at,posted_by) VALUES(?,?,?,?,?,?,?,?,?)", (entry_id, journal_key, account, currency, minor, direction, reference, self.clock.now(), actor))
         return {"entry_id": entry_id, "amount_minor": minor, "direction": direction}
 
     def reverse(self, entry_id: str, *, reference: str, actor: str) -> dict:
