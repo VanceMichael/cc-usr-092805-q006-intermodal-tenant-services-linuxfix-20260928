@@ -124,6 +124,122 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
     last_error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS jobs_due ON scheduled_jobs(status, run_at, lease_until);
+-- 园区结算：带业务有效期的主数据版本（仓位、验收、租约、计量点、服务目录、价格、维保停机、承担关系）
+CREATE TABLE IF NOT EXISTS park_effective_records (
+    record_id TEXT PRIMARY KEY,
+    series_id TEXT NOT NULL,
+    record_type TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    tenant_org TEXT,
+    payload_json TEXT NOT NULL,
+    valid_from TEXT NOT NULL,
+    valid_to TEXT,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    request_key TEXT NOT NULL,
+    UNIQUE(record_type, series_id, version),
+    UNIQUE(record_type, request_key)
+);
+CREATE INDEX IF NOT EXISTS park_eff_type_window ON park_effective_records(record_type, valid_from, valid_to, status);
+CREATE INDEX IF NOT EXISTS park_eff_tenant ON park_effective_records(tenant_org, record_type, valid_from);
+-- 园区结算：账期
+CREATE TABLE IF NOT EXISTS park_periods (
+    period_id TEXT PRIMARY KEY,
+    tenant_org TEXT NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    status TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    opened_at TEXT NOT NULL,
+    closed_at TEXT,
+    created_by TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS park_period_tenant ON park_periods(tenant_org, period_start, status);
+-- 园区结算：作业用量（预约确认后按租户拆分的实际数量）
+CREATE TABLE IF NOT EXISTS park_usage (
+    usage_id TEXT PRIMARY KEY,
+    reservation_id TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    capability TEXT NOT NULL,
+    tenant_org TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_by TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS park_usage_window ON park_usage(tenant_org, start_at, end_at, status);
+CREATE INDEX IF NOT EXISTS park_usage_resource ON park_usage(resource_id, start_at, end_at, status);
+-- 园区结算：设备原始读数（经事件收件箱接入，编号唯一）
+CREATE TABLE IF NOT EXISTS park_meter_readings (
+    reading_id TEXT PRIMARY KEY,
+    meter_code TEXT NOT NULL UNIQUE,
+    meter_point_id TEXT NOT NULL,
+    read_value TEXT NOT NULL,
+    read_at TEXT NOT NULL,
+    source TEXT NOT NULL,
+    recorded_by TEXT NOT NULL,
+    status TEXT NOT NULL,
+    adjudicated_value TEXT,
+    adjudicated_by TEXT
+);
+CREATE INDEX IF NOT EXISTS park_reading_point ON park_meter_readings(meter_point_id, read_at, status);
+-- 园区结算：暂停结算挂起项（读号冲突、缺抄表、维保补偿）
+CREATE TABLE IF NOT EXISTS park_holds (
+    hold_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    ref_key TEXT NOT NULL,
+    tenant_org TEXT,
+    period_id TEXT,
+    detail_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS park_holds_status ON park_holds(status, kind, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS park_holds_open_key ON park_holds(kind, ref_key) WHERE status='open';
+-- 园区结算：费用行（每笔费用可下钻到占用、读数、价目、批准）
+CREATE TABLE IF NOT EXISTS park_charge_lines (
+    line_id TEXT PRIMARY KEY,
+    period_id TEXT NOT NULL,
+    line_key TEXT NOT NULL,
+    tenant_org TEXT NOT NULL,
+    service_code TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    basis TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    reversed_line_id TEXT,
+    approval_id TEXT,
+    FOREIGN KEY(period_id) REFERENCES park_periods(period_id),
+    FOREIGN KEY(reversed_line_id) REFERENCES park_charge_lines(line_id),
+    UNIQUE(period_id, line_key)
+);
+CREATE INDEX IF NOT EXISTS park_lines_period ON park_charge_lines(period_id, tenant_org, status);
+-- 园区结算：减免/调整申请与审批（录入人不能批准自己的申请）
+CREATE TABLE IF NOT EXISTS park_adjustments (
+    adjustment_id TEXT PRIMARY KEY,
+    period_id TEXT NOT NULL,
+    tenant_org TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL,
+    requested_by TEXT NOT NULL,
+    reviewed_by TEXT,
+    line_id TEXT,
+    hold_ref TEXT,
+    request_key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    UNIQUE(request_key)
+);
+CREATE INDEX IF NOT EXISTS park_adjustments_status ON park_adjustments(status, tenant_org, created_at);
 """
 
 

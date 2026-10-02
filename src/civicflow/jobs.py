@@ -20,7 +20,14 @@ class JobQueue:
     def schedule(self, *, job_type: str, subject_id: str, run_at: str, payload: dict) -> str:
         job_id = new_id("job"); run_at = canonical_instant(run_at)
         with self.database.transaction() as connection:
-            connection.execute("INSERT INTO scheduled_jobs(job_id,job_type,subject_id,run_at,payload_json,status) VALUES(?,?,?,?,?,'waiting')", (job_id, job_type, subject_id, run_at, canonical_json(payload)))
+            self.schedule_in(connection, job_id=job_id, job_type=job_type, subject_id=subject_id, run_at=run_at, payload=payload)
+        return job_id
+
+    def schedule_in(self, connection, *, job_type: str, subject_id: str, run_at: str, payload: dict,
+                    job_id: str | None = None) -> str:
+        """在调用方已开启的事务连接内写入定时任务。"""
+        job_id = job_id or new_id("job"); run_at = canonical_instant(run_at)
+        connection.execute("INSERT INTO scheduled_jobs(job_id,job_type,subject_id,run_at,payload_json,status) VALUES(?,?,?,?,?,'waiting')", (job_id, job_type, subject_id, run_at, canonical_json(payload)))
         return job_id
 
     def claim_due(self, *, seconds: int = 30, limit: int = 20) -> list[dict]:
